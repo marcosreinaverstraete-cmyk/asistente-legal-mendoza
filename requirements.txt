@@ -5,4 +5,6 @@ langchain-google-genai
 langchain-huggingface
 chromadb
 sentence-transformers
+pypdf
 gdown
+protobuf==3.20.3
