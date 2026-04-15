@@ -21,8 +21,8 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     load_dotenv()
 
-# Inicializamos Gemini 1.5 Flash (Rápido y con mucha memoria)
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+# Inicializamos Gemini 2.5 Flash (Rápido y con mucha memoria)
+llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.2)
 # ==========================================
 # 2. CARGA DE BASE DE DATOS (Dinamismo de Drive)
 # ==========================================
@@ -55,7 +55,7 @@ if "textos_legales_vault" not in st.session_state:
 def actualizar_resumen_incremental(nueva_pregunta, nueva_respuesta):
     """Mantiene un resumen compacto de la charla para no saturar con 'ruido'."""
     prompt_resumen = f"""Actualizá el RESUMEN DE HECHOS del caso con la nueva información. 
-    Mantené solo datos duros, fechas y objetivos. Sé breve (viñetas).
+    Mantené solo datos duros, fechas y objetivos. Sé breve (viñetas).Es importante mantener en este resumen sobre todo las primeras y últimas partes de la conversación que suelen ser las mas importates
     
     RESUMEN ANTERIOR: {st.session_state.resumen_hechos}
     NUEVO INTERCAMBIO:
