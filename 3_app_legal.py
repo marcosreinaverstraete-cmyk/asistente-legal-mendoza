@@ -165,33 +165,44 @@ if pregunta:
                 with st.expander("👁️ Ver los 6 fragmentos analizados por la IA"):
                     st.text(contexto_con_indices)
 
-        # --- MODO 🧠 ESTRATEGIA (Memoria Dual con PRO) ---
+# --- MODO 🧠 ESTRATEGIA (Memoria Dual con PRO + Filtro de 2 Pasos) ---
         else:
-            with st.spinner("🧠 El Socio Senior está analizando el expediente completo..."):
-                contexto_inicial = "\n".join([f"{m['rol'].upper()}: {m['contenido']}" for m in st.session_state.mensajes_iniciales])
-                mensajes_recientes = st.session_state.mensajes[-6:]
-                contexto_reciente = "\n".join([f"{m['rol'].upper()}: {m['contenido']}" for m in mensajes_recientes])
+            with st.spinner("🧠 El Socio Senior está analizando el expediente (Fase 1: Filtrado)..."):
                 vault_text = "\n".join(st.session_state.textos_legales_vault)
                 
-                prompt_socio = f"""
-                Actuá como mi socio legal senior. 
+                # PASO 1: Filtrado fiel con FLASH
+                prompt_filtrado = f"""Sos un asistente que SOLO extrae información.
+                Del siguiente vault legal, copiá TEXTUALMENTE los fragmentos que sean relevantes para este caso. 
+                Si ninguno aplica, escribí: "SIN MATERIAL APLICABLE".
+                NO agregues nada propio, NO interpretes, solo copiá.
                 
-                [PLANTEO INICIAL]: {contexto_inicial}
-                [HILO RECIENTE]: {contexto_reciente}
-                [DOCTRINA Y LEYES EN EXPEDIENTE]: {vault_text}
-                [PREGUNTA ACTUAL]: {pregunta}
+                VAULT: {vault_text}
+                CASO: {st.session_state.resumen_hechos}
+                PREGUNTA: {pregunta}
                 
-                REGLAS DE ORO ESTRICTAS:
-                1. Respuestas DIRECTAS, al grano y en formato viñetas. Eliminá cualquier introducción o conclusión de cortesía.
-                2. Cruzá los hechos con la [DOCTRINA Y LEYES EN EXPEDIENTE].
-                3. Si la doctrina guardada NO sirve para responder la pregunta, tu única respuesta debe ser: "No hay información legal en el expediente para analizar esto." 
-                4. PROHIBIDO irte por las ramas, divagar o usar conocimientos externos no guardados. Si no está en el expediente, no existe.
+                FRAGMENTOS APLICABLES (copiados textualmente):"""
                 
-                ANÁLISIS ESTRATÉGICO CONCISO:"""
+                material_filtrado = llm_flash.invoke(prompt_filtrado).content
+                
+            with st.spinner("🧠 El Socio Senior está trazando la estrategia (Fase 2: Razonamiento)..."):
+                # PASO 2: Razonamiento sobre material filtrado con PRO
+                prompt_socio = f"""Sos mi socio legal senior. Tenés que razonar sobre el material que ya fue filtrado y validado del expediente.
+                
+                [HECHOS DEL CASO]: {st.session_state.resumen_hechos}
+                [PREGUNTA]: {pregunta}
+                [MATERIAL LEGAL VALIDADO PARA ESTE ANÁLISIS]: 
+                {material_filtrado}
+                
+                REGLAS:
+                1. Podés deducir, inferir y razonar SIEMPRE que tu punto de partida sea algo del [MATERIAL LEGAL VALIDADO]. Indicá de dónde partís (citá el autor o ley).
+                2. Si el material dice "X aplica en contratos", podés deducir sus consecuencias para este caso concreto.
+                3. Si necesitás doctrina que NO está en el material, decilo explícitamente: "Falta jurisprudencia sobre Y, recomiendo buscarla en el Modo Búsqueda."
+                4. Formato: viñetas, directo, sin introducciones ni saludos.
+                
+                ANÁLISIS:"""
                 
                 respuesta = llm_pro.invoke(prompt_socio).content
                 st.markdown(respuesta)
-
         # --- ACTUALIZACIÓN DE MEMORIA FINAL ---
         st.session_state.mensajes.append({"rol": "assistant", "contenido": respuesta})
         
