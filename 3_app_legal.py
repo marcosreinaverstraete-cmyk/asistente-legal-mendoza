@@ -20,10 +20,9 @@ if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
     load_dotenv()
-
-# Inicializamos Gemini 2.5 Flash (Rápido y con mucha memoria)
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
-# ==========================================
+# Inicializamos los dos motores (Flash para buscar rápido, Pro para pensar la estrategia)
+llm_flash = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+llm_pro = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.2)# ==========================================
 # 2. CARGA DE BASE DE DATOS (Dinamismo de Drive)
 # ==========================================
 @st.cache_resource
@@ -105,52 +104,54 @@ if pregunta:
     with st.chat_message("assistant"):
         # --- MODO 📚 BÚSQUEDA (HyDE) ---
         # --- MODO 📚 BÚSQUEDA (HyDE) ---
+        # --- MODO 📚 BÚSQUEDA (HyDE) ---
         if modo == "📚 Búsqueda (HyDE)":
             with st.spinner("🔍 Generando hipótesis legal y buscando en biblioteca..."):
-                # PASO HyDE: Respuesta ficticia técnica
+                # PASO HyDE: Usamos Flash para la hipótesis rápida
                 hyde_prompt = f"Como abogado experto, escribí un párrafo técnico legal que responda a: {pregunta}"
-                ficticio = llm.invoke(hyde_prompt).content
+                ficticio = llm_flash.invoke(hyde_prompt).content
                 
                 # Buscamos en Chroma
                 docs = vector_db.similarity_search(ficticio, k=6)
                 
-                # Preparamos el contexto con números para que la IA los identifique
+                # Preparamos el contexto con índices para que la IA elija
                 contexto_con_indices = ""
                 for i, d in enumerate(docs):
                     fuente = f"[Rama: {d.metadata.get('rama')}, Archivo: {d.metadata.get('source')}]"
                     contexto_con_indices += f"\n--- FRAGMENTO {i+1} ---\n{fuente}\n{d.page_content}\n"
 
+                # PROMPT ESTRICTO DE BÚSQUEDA Y CITAS
                 prompt_rag = f"""
                 Analizá estos fragmentos legales para responder la pregunta del abogado.
                 
                 [FRAGMENTOS DISPONIBLES]:
                 {contexto_con_indices}
                 
-                [PREGUNTA]:
+                [PREGUNTA ACTUAL A RESPONDER]:
                 {pregunta}
                 
-                INSTRUCCIONES:
-                1. Respondé de forma técnica y profesional citando fuentes.
-                2. Al finalizar tu respuesta, debés indicar cuáles de los fragmentos fueron REALMENTE útiles para tu respuesta.
-                3. La última línea de tu respuesta debe ser EXACTAMENTE: RELEVANTES: [números separados por comas]
+                INSTRUCCIONES ESTRICTAS:
+                1. Respondé ÚNICAMENTE a la [PREGUNTA ACTUAL].
+                2. Basate EXCLUSIVAMENTE en los fragmentos. Si no está la info, decí "No tengo doctrina sobre esto en mis libros".
+                3. PROHIBIDO decir "En el fragmento 1...". Tenés que citar el AUTOR o la LEY usando el nombre del archivo (Ej: "Según el archivo Borda_Obligaciones.pdf...").
+                4. La última línea de tu respuesta debe ser EXACTAMENTE: RELEVANTES: [números separados por comas]
                 
                 RESPUESTA:"""
                 
-                full_res = llm.invoke(prompt_rag).content
+                # Usamos Flash para responder rápido
+                full_res = llm_flash.invoke(prompt_rag).content
                 
-                # --- FILTRO DE RELEVANCIA (Lógica de guardado) ---
+                # --- FILTRO DE RELEVANCIA (Lógica de guardado en la Caja Fuerte) ---
                 import re
-                # Buscamos la etiqueta RELEVANTES al final
                 match = re.search(r"RELEVANTES:\s*\[?([\d\s,]+)\]?", full_res)
                 
                 if match:
-                    # Limpiamos la respuesta para que el usuario no vea la etiqueta técnica
+                    # Le sacamos la etiqueta fea a la respuesta final
                     respuesta = full_res[:match.start()].strip()
                     indices_str = match.group(1)
-                    # Convertimos "1, 3" en una lista [1, 3]
                     indices = [int(x.strip()) for x in indices_str.split(",") if x.strip().isdigit()]
                     
-                    # Guardamos solo los elegidos por la IA
+                    # Guardamos SOLO los fragmentos que la IA consideró útiles
                     for idx in indices:
                         if 1 <= idx <= len(docs):
                             d = docs[idx-1]
