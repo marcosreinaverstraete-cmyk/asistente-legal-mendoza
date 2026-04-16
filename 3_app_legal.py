@@ -22,7 +22,7 @@ else:
     load_dotenv()
 
 # Inicializamos Gemini 2.5 Flash (Rápido y con mucha memoria)
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.2)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
 # ==========================================
 # 2. CARGA DE BASE DE DATOS (Dinamismo de Drive)
 # ==========================================
