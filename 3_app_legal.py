@@ -174,27 +174,20 @@ if pregunta:
                 vault_text = "\n".join(st.session_state.textos_legales_vault)
                 
                 prompt_socio = f"""
-                Actuá como mi socio legal senior. Tu misión es darme una estrategia basada en el expediente.
+                Actuá como mi socio legal senior. 
                 
-                [PLANTEO INICIAL DEL CASO (Contexto)]:
-                {contexto_inicial}
+                [PLANTEO INICIAL]: {contexto_inicial}
+                [HILO RECIENTE]: {contexto_reciente}
+                [DOCTRINA Y LEYES EN EXPEDIENTE]: {vault_text}
+                [PREGUNTA ACTUAL]: {pregunta}
                 
-                [HILO RECIENTE DE LA CHARLA]:
-                {contexto_reciente}
+                REGLAS DE ORO ESTRICTAS:
+                1. Respuestas DIRECTAS, al grano y en formato viñetas. Eliminá cualquier introducción o conclusión de cortesía.
+                2. Cruzá los hechos con la [DOCTRINA Y LEYES EN EXPEDIENTE].
+                3. Si la doctrina guardada NO sirve para responder la pregunta, tu única respuesta debe ser: "No hay información legal en el expediente para analizar esto." 
+                4. PROHIBIDO irte por las ramas, divagar o usar conocimientos externos no guardados. Si no está en el expediente, no existe.
                 
-                [DOCTRINA Y LEYES GUARDADAS EN EL EXPEDIENTE]:
-                {vault_text}
-                
-                [PREGUNTA ACTUAL A RESOLVER]: 
-                {pregunta}
-                
-                REGLAS DE ORO PARA TU ANÁLISIS:
-                1. Respondé ÚNICAMENTE a la [PREGUNTA ACTUAL].
-                2. Usá los "Hechos Iniciales" para no perder de vista de qué trata el caso.
-                3. Cruzá la consulta con la "Doctrina y Leyes" guardadas. Si no hay leyes que apliquen, avisame. PROHIBIDO usar tus conocimientos generales si no están en las leyes guardadas.
-                4. Sé crítico, buscá riesgos procesales y sugerí pasos a seguir.
-                
-                TU ANÁLISIS ESTRATÉGICO:"""
+                ANÁLISIS ESTRATÉGICO CONCISO:"""
                 
                 respuesta = llm_pro.invoke(prompt_socio).content
                 st.markdown(respuesta)
