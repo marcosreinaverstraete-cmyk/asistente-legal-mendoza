@@ -2,6 +2,7 @@ import os
 import warnings
 import zipfile
 import gdown
+import re
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -20,9 +21,12 @@ if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
     load_dotenv()
+
 # Inicializamos los dos motores (Flash para buscar rápido, Pro para pensar la estrategia)
 llm_flash = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
-llm_pro = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.2)# ==========================================
+llm_pro = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.2)
+
+# ==========================================
 # 2. CARGA DE BASE DE DATOS (Dinamismo de Drive)
 # ==========================================
 @st.cache_resource
@@ -44,6 +48,8 @@ vector_db = cargar_base_de_datos()
 # ==========================================
 # 3. GESTIÓN DE MEMORIA (EXPEDIENTE VIRTUAL)
 # ==========================================
+if "mensajes_iniciales" not in st.session_state:
+    st.session_state.mensajes_iniciales = [] # Para guardar el planteo original
 if "mensajes" not in st.session_state:
     st.session_state.mensajes = []
 if "resumen_hechos" not in st.session_state:
@@ -52,17 +58,21 @@ if "textos_legales_vault" not in st.session_state:
     st.session_state.textos_legales_vault = []
 
 def actualizar_resumen_incremental(nueva_pregunta, nueva_respuesta):
-    """Mantiene un resumen compacto de la charla para no saturar con 'ruido'."""
-    prompt_resumen = f"""Actualizá el RESUMEN DE HECHOS del caso con la nueva información. 
-    Mantené solo datos duros, fechas y objetivos. Sé breve (viñetas).Es importante mantener en este resumen sobre todo las primeras y últimas partes de la conversación que suelen ser las mas importates
+    """Extrae solo hechos y objetivos, ignorando leyes."""
+    prompt_resumen = f"""Tu única tarea es extraer LOS HECHOS DEL CASO y EL OBJETIVO DEL CLIENTE.
+    PROHIBIDO resumir leyes, doctrina o jurisprudencia (eso se guarda en otro lado).
+    Si la charla fue solo una consulta teórica sin un cliente real, mantené el resumen anterior sin sumar nada.
     
     RESUMEN ANTERIOR: {st.session_state.resumen_hechos}
+    
     NUEVO INTERCAMBIO:
     Abogado: {nueva_pregunta}
     IA: {nueva_respuesta}
     
-    NUEVO RESUMEN ACTUALIZADO:"""
-    resumen = llm.invoke(prompt_resumen)
+    HECHOS Y OBJETIVOS ACTUALIZADOS (en viñetas):"""
+    
+    # Usamos Flash porque es una tarea mecánica y rápida
+    resumen = llm_flash.invoke(prompt_resumen)
     st.session_state.resumen_hechos = resumen.content
 
 # ==========================================
@@ -77,6 +87,7 @@ with st.sidebar:
     )
     st.markdown("---")
     if st.button("🗑️ Limpiar Memoria del Caso"):
+        st.session_state.mensajes_iniciales = []
         st.session_state.mensajes = []
         st.session_state.resumen_hechos = "No hay hechos registrados aún."
         st.session_state.textos_legales_vault = []
@@ -102,25 +113,19 @@ if pregunta:
     st.session_state.mensajes.append({"rol": "user", "contenido": pregunta})
 
     with st.chat_message("assistant"):
-        # --- MODO 📚 BÚSQUEDA (HyDE) ---
-        # --- MODO 📚 BÚSQUEDA (HyDE) ---
-        # --- MODO 📚 BÚSQUEDA (HyDE) ---
+        # --- MODO 📚 BÚSQUEDA (HyDE con FLASH) ---
         if modo == "📚 Búsqueda (HyDE)":
             with st.spinner("🔍 Generando hipótesis legal y buscando en biblioteca..."):
-                # PASO HyDE: Usamos Flash para la hipótesis rápida
                 hyde_prompt = f"Como abogado experto, escribí un párrafo técnico legal que responda a: {pregunta}"
                 ficticio = llm_flash.invoke(hyde_prompt).content
                 
-                # Buscamos en Chroma
                 docs = vector_db.similarity_search(ficticio, k=6)
                 
-                # Preparamos el contexto con índices para que la IA elija
                 contexto_con_indices = ""
                 for i, d in enumerate(docs):
                     fuente = f"[Rama: {d.metadata.get('rama')}, Archivo: {d.metadata.get('source')}]"
                     contexto_con_indices += f"\n--- FRAGMENTO {i+1} ---\n{fuente}\n{d.page_content}\n"
 
-                # PROMPT ESTRICTO DE BÚSQUEDA Y CITAS
                 prompt_rag = f"""
                 Analizá estos fragmentos legales para responder la pregunta del abogado.
                 
@@ -138,20 +143,15 @@ if pregunta:
                 
                 RESPUESTA:"""
                 
-                # Usamos Flash para responder rápido
                 full_res = llm_flash.invoke(prompt_rag).content
                 
-                # --- FILTRO DE RELEVANCIA (Lógica de guardado en la Caja Fuerte) ---
-                import re
                 match = re.search(r"RELEVANTES:\s*\[?([\d\s,]+)\]?", full_res)
                 
                 if match:
-                    # Le sacamos la etiqueta fea a la respuesta final
                     respuesta = full_res[:match.start()].strip()
                     indices_str = match.group(1)
                     indices = [int(x.strip()) for x in indices_str.split(",") if x.strip().isdigit()]
                     
-                    # Guardamos SOLO los fragmentos que la IA consideró útiles
                     for idx in indices:
                         if 1 <= idx <= len(docs):
                             d = docs[idx-1]
@@ -165,26 +165,45 @@ if pregunta:
                 with st.expander("👁️ Ver los 6 fragmentos analizados por la IA"):
                     st.text(contexto_con_indices)
 
-        # --- MODO 🧠 ESTRATEGIA (Memoria Dual) ---
+        # --- MODO 🧠 ESTRATEGIA (Memoria Dual con PRO) ---
         else:
-            with st.spinner("🧠 Consultando expediente y analizando estrategia..."):
-                # Construimos el expediente desde la memoria
-                vault_text = "\n".join(st.session_state.textos_legales_vault[-5:]) # Últimos 5 textos crudos
+            with st.spinner("🧠 El Socio Senior está analizando el expediente completo..."):
+                contexto_inicial = "\n".join([f"{m['rol'].upper()}: {m['contenido']}" for m in st.session_state.mensajes_iniciales])
+                mensajes_recientes = st.session_state.mensajes[-6:]
+                contexto_reciente = "\n".join([f"{m['rol'].upper()}: {m['contenido']}" for m in mensajes_recientes])
+                vault_text = "\n".join(st.session_state.textos_legales_vault)
                 
-                prompt_socio = f"""Actuá como mi socio legal senior. Analizá mi planteo usando el expediente actual.
+                prompt_socio = f"""
+                Actuá como mi socio legal senior. Tu misión es darme una estrategia basada en el expediente.
                 
-                [RESUMEN DE HECHOS]: {st.session_state.resumen_hechos}
+                [PLANTEO INICIAL DEL CASO (Contexto)]:
+                {contexto_inicial}
                 
-                [TEXTOS LEGALES RELEVANTES EN MEMORIA]:
+                [HILO RECIENTE DE LA CHARLA]:
+                {contexto_reciente}
+                
+                [DOCTRINA Y LEYES GUARDADAS EN EL EXPEDIENTE]:
                 {vault_text}
                 
-                [NUEVA CONSULTA]: {pregunta}
+                [PREGUNTA ACTUAL A RESOLVER]: 
+                {pregunta}
                 
-                Tu análisis estratégico:"""
+                REGLAS DE ORO PARA TU ANÁLISIS:
+                1. Respondé ÚNICAMENTE a la [PREGUNTA ACTUAL].
+                2. Usá los "Hechos Iniciales" para no perder de vista de qué trata el caso.
+                3. Cruzá la consulta con la "Doctrina y Leyes" guardadas. Si no hay leyes que apliquen, avisame. PROHIBIDO usar tus conocimientos generales si no están en las leyes guardadas.
+                4. Sé crítico, buscá riesgos procesales y sugerí pasos a seguir.
                 
-                respuesta = llm.invoke(prompt_socio).content
+                TU ANÁLISIS ESTRATÉGICO:"""
+                
+                respuesta = llm_pro.invoke(prompt_socio).content
                 st.markdown(respuesta)
 
-        # Actualizamos la memoria incremental al final
-        actualizar_resumen_incremental(pregunta, respuesta)
+        # --- ACTUALIZACIÓN DE MEMORIA FINAL ---
         st.session_state.mensajes.append({"rol": "assistant", "contenido": respuesta})
+        
+        # Guardamos los primeros 2 intercambios (4 mensajes: user, asst, user, asst)
+        if len(st.session_state.mensajes) <= 4:
+            st.session_state.mensajes_iniciales = st.session_state.mensajes.copy()
+            
+        actualizar_resumen_incremental(pregunta, respuesta)
