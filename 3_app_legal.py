@@ -104,31 +104,65 @@ if pregunta:
 
     with st.chat_message("assistant"):
         # --- MODO 📚 BÚSQUEDA (HyDE) ---
+        # --- MODO 📚 BÚSQUEDA (HyDE) ---
         if modo == "📚 Búsqueda (HyDE)":
             with st.spinner("🔍 Generando hipótesis legal y buscando en biblioteca..."):
-                # PASO HyDE: Generamos respuesta ficticia para mejorar el match
+                # PASO HyDE: Respuesta ficticia técnica
                 hyde_prompt = f"Como abogado experto, escribí un párrafo técnico legal que responda a: {pregunta}"
                 ficticio = llm.invoke(hyde_prompt).content
                 
-                # Buscamos en Chroma usando la respuesta ficticia
+                # Buscamos en Chroma
                 docs = vector_db.similarity_search(ficticio, k=6)
-                contexto_crudo = ""
-                for d in docs:
-                    fuente = f"[Rama: {d.metadata.get('rama')}, Archivo: {d.metadata.get('source')}]"
-                    contexto_crudo += f"\n{fuente}\n{d.page_content}\n"
-                    # Guardamos el texto crudo en la caja fuerte si no está
-                    if d.page_content not in st.session_state.textos_legales_vault:
-                        st.session_state.textos_legales_vault.append(f"{fuente}: {d.page_content}")
-
-                prompt_rag = f"""Usá estos fragmentos EXACTOS para responder. 
-                Contexto: {contexto_crudo}
-                Pregunta: {pregunta}
-                Respuesta Técnica:"""
                 
-                respuesta = llm.invoke(prompt_rag).content
+                # Preparamos el contexto con números para que la IA los identifique
+                contexto_con_indices = ""
+                for i, d in enumerate(docs):
+                    fuente = f"[Rama: {d.metadata.get('rama')}, Archivo: {d.metadata.get('source')}]"
+                    contexto_con_indices += f"\n--- FRAGMENTO {i+1} ---\n{fuente}\n{d.page_content}\n"
+
+                prompt_rag = f"""
+                Analizá estos fragmentos legales para responder la pregunta del abogado.
+                
+                [FRAGMENTOS DISPONIBLES]:
+                {contexto_con_indices}
+                
+                [PREGUNTA]:
+                {pregunta}
+                
+                INSTRUCCIONES:
+                1. Respondé de forma técnica y profesional citando fuentes.
+                2. Al finalizar tu respuesta, debés indicar cuáles de los fragmentos fueron REALMENTE útiles para tu respuesta.
+                3. La última línea de tu respuesta debe ser EXACTAMENTE: RELEVANTES: [números separados por comas]
+                
+                RESPUESTA:"""
+                
+                full_res = llm.invoke(prompt_rag).content
+                
+                # --- FILTRO DE RELEVANCIA (Lógica de guardado) ---
+                import re
+                # Buscamos la etiqueta RELEVANTES al final
+                match = re.search(r"RELEVANTES:\s*\[?([\d\s,]+)\]?", full_res)
+                
+                if match:
+                    # Limpiamos la respuesta para que el usuario no vea la etiqueta técnica
+                    respuesta = full_res[:match.start()].strip()
+                    indices_str = match.group(1)
+                    # Convertimos "1, 3" en una lista [1, 3]
+                    indices = [int(x.strip()) for x in indices_str.split(",") if x.strip().isdigit()]
+                    
+                    # Guardamos solo los elegidos por la IA
+                    for idx in indices:
+                        if 1 <= idx <= len(docs):
+                            d = docs[idx-1]
+                            fuente = f"[Rama: {d.metadata.get('rama')}, Archivo: {d.metadata.get('source')}]"
+                            if d.page_content not in st.session_state.textos_legales_vault:
+                                st.session_state.textos_legales_vault.append(f"{fuente}: {d.page_content}")
+                else:
+                    respuesta = full_res
+
                 st.markdown(respuesta)
-                with st.expander("👁️ Ver fuentes originales"):
-                    st.text(contexto_crudo)
+                with st.expander("👁️ Ver los 6 fragmentos analizados por la IA"):
+                    st.text(contexto_con_indices)
 
         # --- MODO 🧠 ESTRATEGIA (Memoria Dual) ---
         else:
